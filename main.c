@@ -22,6 +22,13 @@
 #include "FTM.h"
 #include "NVIC.h"
 
+//#define mainONE_SHOT_TIMER_PERIOD		( pdMS_TO_TICKS( 51.82 / 1000 ) )
+//#define mainAUTO_RELOAD_TIMER_PERIOD	( pdMS_TO_TICKS( 103.64 / 1000 ) )
+
+#define mainONE_SHOT_TIMER_PERIOD		( pdMS_TO_TICKS( 500 ) )
+#define mainAUTO_RELOAD_TIMER_PERIOD	( pdMS_TO_TICKS( 1000 ) )
+
+
 // Queue to hold random numbers
 QueueHandle_t dataQueue;
 
@@ -30,22 +37,65 @@ SemaphoreHandle_t sharedSemaphore;
 
 // Software timer handle
 TimerHandle_t xOneShotTimer;
+TimerHandle_t xAutoReloadTimer;
+
+// Variable to take the bits received from UART
+uint16_t bit_count = 0;
+uint16_t current_byte = 0;
 
 uint8_t * str1 = {"Received Number: \r\n"};
-uint8_t * str3 = {"Timer Callback: Performing Periodic Task\r\n"};
+uint8_t * str2 = {"Auto-Reload Timer Executing\r\n"};
+uint8_t * str3 = {"One-Shot Timer Executed, about to start a new timer\r\n"};
+uint8_t * str4 = {"bitReceived "};
 
 // Timer callback function
 void prvOneShotTimerCallback(TimerHandle_t xTimer)
 {
     // Send data to the queue when the timer expires
-    int data = 42; // Example data to be sent
+//    int data = 42; // Example data to be sent
     UART_SendString(str3);
-    if (xQueueSend(dataQueue, &data, 0) != pdPASS) {
-        // Handle queue full error
-    }
+//    if (xQueueSend(dataQueue, &data, 0) != pdPASS) {
+//        // Handle queue full error
+//    }
+
 }
 
-// ISR Simulating an External Hardware Interrupt
+void prvAutoReloadTimerCallback(TimerHandle_t xTimer)
+{
+	uint8_t read_bit;
+	/* Configure PORTD1 as GPIO as input and Alt. 1 to do bit reading */
+	PORTD->PCR[1] = kPORT_MuxAsGpio;
+	GPIOD->PDDR &= ~(1 << 1); /* Place a 0 on bit 1 to behave as input */
+	read_bit = GPIO_PinRead(GPIOD, 1U); /* Read value from GPIO */;
+//	UART_SendByte(read_bit);
+
+	// Estamos en la lectura del byte
+	if (bit_count  > 0 && bit_count <= 9)
+	{
+		 // recorremos a la izquierda para agregar el proximo bit
+		 current_byte <<= 1;
+		 // agregamos el bit
+		 current_byte |= read_bit;
+	}
+	// START bit
+	else if (bit_count == 0 && read_bit == 0)
+	{
+		bit_count += 1;
+	}
+	// STOP bit, idealmente checar si el bit leido es 1
+	else if (bit_count == 9 && read_bit == 1)
+	{
+		bit_count = 0;
+	}
+	else
+	{
+
+	}
+	UART_SendString(str4);
+}
+
+
+// ISR from External Hardware Interrupt
 void FTM_INPUT_CAPTURE_HANDLER(void)
 {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -68,39 +118,58 @@ void FTM_INPUT_CAPTURE_HANDLER(void)
 void uartTask(void *pvParameters)
 {
     int receivedData;
-    while (1) {
+    while (1)
+    {
         // Wait for the semaphore to be available
-        if (xSemaphoreTake(sharedSemaphore, portMAX_DELAY) == pdTRUE) {
-            // Receive data from the queue
-            if (xQueueReceive(dataQueue, &receivedData, portMAX_DELAY) == pdTRUE) {
-                // Process received data
-                UART_SendString(str1);
-                UART_SendString(tick_to_ascii(receivedData));
-            }
+        if (xSemaphoreTake(sharedSemaphore, portMAX_DELAY) == pdTRUE)
+        {
+        	// Create and start a new timer
+			xAutoReloadTimer = xTimerCreate("Auto-Reload_Timer",
+											mainAUTO_RELOAD_TIMER_PERIOD,
+											pdTRUE,
+											(void *)0,
+											prvAutoReloadTimerCallback);
+			if (xAutoReloadTimer != NULL)
+			{
+				if (xTimerStart(xAutoReloadTimer, 0) != pdPASS)
+				{
+					// Handle timer start error
+				}
+			}
+//            // Receive data from the queue
+//            if (xQueueReceive(dataQueue, &receivedData, portMAX_DELAY) == pdTRUE)
+//            {
+//                // Process received data
+//                UART_SendString(str1);
+//                UART_SendString(tick_to_ascii(receivedData));
+//            }
+
         }
-    }
+
+	}
 }
 
 int main(void)
 {
-
+	uint8_t byte = 0x62;
 	Queue_type myQueue;
 	UART_Initialization();
 	Queue_Init(myQueue);
 
+	UART_SendByte(byte);
     // Initialize the hardware and other peripherals
 	FTM_Initialization();
 	// Create a software timer with a 2-second period, using pdFALSE for one-shot timer
     xOneShotTimer = xTimerCreate("One-Shot_Timer",
-    							 pdMS_TO_TICKS(2000),
+    							 mainONE_SHOT_TIMER_PERIOD,
 								 pdFALSE,
-								 (void *)0,
+								 NULL,
 								 prvOneShotTimerCallback);
 
     // Create a queue to hold data
     dataQueue = xQueueCreate(10, sizeof(int)); // Queue can hold up to 10 integers
 
-    // Create a semaphore for synchronization
+    // Create a semaphore for synchronization of input capture and one-shot timer
     sharedSemaphore = xSemaphoreCreateBinary();
 
     // Check if the timer, queue, and semaphore were created successfully

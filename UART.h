@@ -12,6 +12,7 @@
 #include "board.h"
 #include "pin_mux.h"
 #include "fsl_uart.h"
+#include "fsl_clock.h"
 
 #define UART_CLK_FREQ   CLOCK_GetFreq(SYS_CLK)
 
