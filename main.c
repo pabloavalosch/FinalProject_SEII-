@@ -11,6 +11,7 @@
  */
 /* FreeRTOS.org includes. */
 #include "FreeRTOS.h"
+#include "FreeRTOSConfig.h"
 #include "task.h"
 #include "semphr.h"
 #include "timers.h"
@@ -42,6 +43,7 @@ TimerHandle_t xAutoReloadTimer;
 // Variable to take the bits received from UART
 uint16_t bit_count = 0;
 uint16_t current_byte = 0;
+uint16_t read_bit;
 
 uint8_t * str1 = {"Received Number: \r\n"};
 uint8_t * str2 = {"Auto-Reload Timer Executing\r\n"};
@@ -51,9 +53,13 @@ uint8_t * str4 = {"bitReceived "};
 // Timer callback function
 void prvOneShotTimerCallback(TimerHandle_t xTimer)
 {
+	/* Configure PORTD1 as GPIO as input and Alt. 1 to do bit reading */
+	PORTD->PCR[0] = (kPORT_MuxAsGpio << 8) | (kPORT_PullUp);
+	GPIOD->PDDR |= 0x01; /* Place a 1 on bit 0 to behave as output */
+//	GPIOD->PTOR |= 0x01; /* Place a 1 on bit 0 to toggle that GPIO bit */
     // Send data to the queue when the timer expires
 //    int data = 42; // Example data to be sent
-    UART_SendString(str3);
+//    UART_SendString(str3);
 //    if (xQueueSend(dataQueue, &data, 0) != pdPASS) {
 //        // Handle queue full error
 //    }
@@ -62,36 +68,19 @@ void prvOneShotTimerCallback(TimerHandle_t xTimer)
 
 void prvAutoReloadTimerCallback(TimerHandle_t xTimer)
 {
-	uint8_t read_bit;
+//	uint8_t read_bit;
+//	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+//    if (xTimerStopFromISR(xOneShotTimer, &xHigherPriorityTaskWoken) != pdPASS) {
+//        // Handle error if timer start fails
+//    }
 	/* Configure PORTD1 as GPIO as input and Alt. 1 to do bit reading */
-	PORTD->PCR[1] = kPORT_MuxAsGpio;
-	GPIOD->PDDR &= ~(1 << 1); /* Place a 0 on bit 1 to behave as input */
-	read_bit = GPIO_PinRead(GPIOD, 1U); /* Read value from GPIO */;
+//	PORTD->PCR[1] = kPORT_MuxAsGpio;
+//	GPIOD->PDDR &= ~(1 << 1); /* Place a 0 on bit 1 to behave as input */
+//	read_bit = GPIO_PinRead(GPIOD, 1U); /* Read value from GPIO */;
 //	UART_SendByte(read_bit);
+	GPIOD->PTOR |= 0x01; /* Place a 1 on bit 0 to toggle that GPIO bit */
 
-	// Estamos en la lectura del byte
-	if (bit_count  > 0 && bit_count <= 9)
-	{
-		 // recorremos a la izquierda para agregar el proximo bit
-		 current_byte <<= 1;
-		 // agregamos el bit
-		 current_byte |= read_bit;
-	}
-	// START bit
-	else if (bit_count == 0 && read_bit == 0)
-	{
-		bit_count += 1;
-	}
-	// STOP bit, idealmente checar si el bit leido es 1
-	else if (bit_count == 9 && read_bit == 1)
-	{
-		bit_count = 0;
-	}
-	else
-	{
-
-	}
-	UART_SendString(str4);
+//	UART_SendString(str4);
 }
 
 
@@ -144,6 +133,31 @@ void uartTask(void *pvParameters)
 //                UART_SendString(tick_to_ascii(receivedData));
 //            }
 
+        }
+        else
+        {
+        	//	Estamos en la lectura del byte
+			if (bit_count  > 0 && bit_count <= 9)
+			{
+				 // recorremos a la izquierda para agregar el proximo bit
+				 current_byte <<= 1;
+				 // agregamos el bit
+				 current_byte |= read_bit;
+			}
+			// START bit
+			else if (bit_count == 0 && read_bit == 0)
+			{
+				bit_count += 1;
+			}
+			// STOP bit, idealmente checar si el bit leido es 1
+			else if (bit_count == 9 && read_bit == 1)
+			{
+				bit_count = 0;
+			}
+			else
+			{
+
+			}
         }
 
 	}
