@@ -26,8 +26,9 @@
 //#define mainONE_SHOT_TIMER_PERIOD		( pdMS_TO_TICKS( 51.82 / 1000 ) )
 //#define mainAUTO_RELOAD_TIMER_PERIOD	( pdMS_TO_TICKS( 103.64 / 1000 ) )
 
-#define mainONE_SHOT_TIMER_PERIOD		( (TickType_t) 144 )
-#define mainAUTO_RELOAD_TIMER_PERIOD	( (TickType_t) 96 ) // Ticks (as tick rate is 30000 ticks in 1 second, and I want 0.003175 sec.
+//#define mainONE_SHOT_TIMER_PERIOD					( (TickType_t) 144 )
+#define mainAUTO_RELOAD_TIMER_PERIOD				( (TickType_t) 87 ) // Ticks (as tick rate is 30000 ticks in 1 second, and I want 0.003175 sec.
+#define mainAUTO_RELOAD_TIMER_PERIOD_FOR_START_BIT	( (TickType_t) 48 ) // Ticks (as tick rate is 30000 ticks in 1 second, and I want 0.0015875 sec.
 
 
 // Queue to hold random numbers
@@ -35,6 +36,7 @@ QueueHandle_t dataQueue;
 
 // Semaphore to protect shared resources
 SemaphoreHandle_t sharedSemaphore;
+SemaphoreHandle_t timerSemaphore;
 
 // Software timer handle
 TimerHandle_t xOneShotTimer;
@@ -51,34 +53,6 @@ uint8_t * str3 = {"One-Shot Timer Executed, about to start a new timer\r\n"};
 uint8_t * str4 = {"bitReceived \r\n"};
 
 // Timer callback function
-//void prvOneShotTimerCallback(TimerHandle_t xTimer)
-//{
-//	static TickType_t xTimeNow;
-//	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-//
-//    CLOCK_EnableClock(kCLOCK_PortC);
-//	/* Configure PORTC1 as GPIO as output and Alt. 1 */
-//	PORTC->PCR[1] |= (kPORT_MuxAsGpio << 8) | (kPORT_FastSlewRate << 2);
-//	GPIOC->PDOR |= ~(1 << 1); /* Assign a safe value (0) in output before configuring as output */
-//	GPIOC->PDDR |= (1 << 1); /* Place a 1 on bit 1 to behave as output */
-//	/* Obtain the current tick count. */
-//	xTimeNow = xTaskGetTickCount();
-//	UART_SendString(str3);
-//	UART_SendString(tick_to_ascii(xTimeNow));
-//	DisableIRQ(FTM_INTERRUPT_NUMBER);
-//
-//    // Release the semaphore to notify a task
-//    xSemaphoreGiveFromISR(sharedSemaphore, &xHigherPriorityTaskWoken);
-//
-//    // Request a context switch if required
-//    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-//
-////    if (xTimerStopFromISR(xOneShotTimer, &xHigherPriorityTaskWoken) != pdPASS) {
-////        // Handle error if timer stop fails
-////    }
-//
-//    return;
-//}
 
 void prvAutoReloadTimerCallback(TimerHandle_t xTimer)
 {
@@ -98,7 +72,8 @@ void prvAutoReloadTimerCallback(TimerHandle_t xTimer)
     }
     else
     {
-
+    	// Release the semaphore of timer to notify bitBangingTask that needs to capture bit
+    	xSemaphoreGiveFromISR(timerSemaphore, &xHigherPriorityTaskWoken);
     }
 
     // Request a context switch if required
@@ -106,8 +81,10 @@ void prvAutoReloadTimerCallback(TimerHandle_t xTimer)
 
 //	UART_SendString(str4);
 	UART_SendString(tick_to_ascii(xTimeNow));
+
+	// We delete timer, to create it again with new configuration timeout period
 	xTimerDelete(xAutoReloadTimer, 1);
-//	UART_SendString(str4);
+
 }
 
 
@@ -147,10 +124,9 @@ void FTM_INPUT_CAPTURE_HANDLER(void)
 
 }
 
-// Task that processes data from the queue
+// Task that processes timer creation for second time with the time bit, after this was deleted
 void uartTask(void *pvParameters)
 {
-    int receivedData;
     while (1)
     {
         // Wait for the semaphore to be available
@@ -166,6 +142,13 @@ void uartTask(void *pvParameters)
 
         }
 
+	}
+}
+
+void bitBangingTask(void * pvParameters)
+{
+	while(1)
+	{
         if(xSemaphoreTake(timerSemaphore, portMAX_DELAY) == pdTRUE)
         {
         	//	Estamos en la lectura del byte
@@ -191,7 +174,6 @@ void uartTask(void *pvParameters)
 
 			}
         }
-
 	}
 }
 
@@ -214,7 +196,7 @@ int main(void)
 
 	// Create and start a new timer
 	xAutoReloadTimer = xTimerCreate("Auto-Reload_Timer",
-									mainAUTO_RELOAD_TIMER_PERIOD/2,
+									mainAUTO_RELOAD_TIMER_PERIOD_FOR_START_BIT,
 									pdTRUE,
 									(void *)0,
 									prvAutoReloadTimerCallback);
@@ -226,14 +208,12 @@ int main(void)
     sharedSemaphore = xSemaphoreCreateBinary();
     timerSemaphore = xSemaphoreCreateBinary();
 
-    // Check if the timer, queue, and semaphore were created successfully
-//    if (xOneShotTimer != NULL && dataQueue != NULL && sharedSemaphore != NULL) {
-        // Configure and enable the external interrupt
-        // For example, configure GPIO interrupt, NVIC settings, etc.
-    	NVIC_enable_interrupt_and_priority(FTM3_IRQ, PRIORITY_2);
-        // Create data processing task
-        xTaskCreate(uartTask, "UartTask", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1, NULL);
-//    }
+	// Configure and enable the external interrupt
+	// For example, configure GPIO interrupt, NVIC settings, etc.
+	NVIC_enable_interrupt_and_priority(FTM3_IRQ, PRIORITY_2);
+	// Create data processing task
+	xTaskCreate(uartTask, "UartTask", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1, NULL);
+
 
 	// Start the FreeRTOS scheduler
 	vTaskStartScheduler();
