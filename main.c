@@ -27,9 +27,13 @@
 //#define mainAUTO_RELOAD_TIMER_PERIOD	( pdMS_TO_TICKS( 103.64 / 1000 ) )
 
 //#define mainONE_SHOT_TIMER_PERIOD					( (TickType_t) 144 )
-#define mainAUTO_RELOAD_TIMER_PERIOD				( (TickType_t) 87 ) // Ticks (as tick rate is 30000 ticks in 1 second, and I want 0.003175 sec.
+#define mainAUTO_RELOAD_TIMER_PERIOD				( (TickType_t) 98 ) // Ticks (as tick rate is 30000 ticks in 1 second, and I want 0.003175 sec.
 #define mainAUTO_RELOAD_TIMER_PERIOD_FOR_START_BIT	( (TickType_t) 48 ) // Ticks (as tick rate is 30000 ticks in 1 second, and I want 0.0015875 sec.
-
+#define NO_TICKS_TO_WAIT							(0U)
+#define VIRTUAL_UART0_PIN							(1U)
+//#define VIRTUAL_UART1_PIN							(1U)
+//#define VIRTUAL_UART2_PIN							(1U)
+//#define VIRTUAL_UART3_PIN							(1U)
 
 // Queue to hold random numbers
 QueueHandle_t dataQueue;
@@ -45,7 +49,7 @@ TimerHandle_t xAutoReloadTimer;
 // Variable to take the bits received from UART
 uint16_t bit_count = 0;
 uint16_t current_byte = 0;
-uint16_t read_bit;
+uint16_t pin_value_read;
 
 uint8_t * str1 = {"Input Capture Current Tick: \r\n"};
 uint8_t * str2 = {"Auto-Reload Timer Executing\r\n"};
@@ -56,17 +60,17 @@ uint8_t * str4 = {"bitReceived \r\n"};
 
 void prvAutoReloadTimerCallback(TimerHandle_t xTimer)
 {
-	static TickType_t xTimeNow;
+	static uint8_t ucLocalTickCount = 0;
 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
+	/* Do the toogle of pin to know when this callback is entering (just for debugging) */
 	GPIOC->PTOR |= (1 << 1); /* Place a 1 on bit 1 to toggle that GPIO bit */
 
-	UART_SendString(str2);
-	/* Obtain the current tick count. */
-	xTimeNow = xTaskGetTickCount();
 
-    if(!xHigherPriorityTaskWoken)
+    if(!ucLocalTickCount)
     {
+    	// We delete timer, to create it again with new configuration timeout period
+    	xTimerDelete(xAutoReloadTimer, NO_TICKS_TO_WAIT);
     	// Release the semaphore to notify a task that half of bit time has passed
     	xSemaphoreGiveFromISR(sharedSemaphore, &xHigherPriorityTaskWoken);
     }
@@ -76,14 +80,10 @@ void prvAutoReloadTimerCallback(TimerHandle_t xTimer)
     	xSemaphoreGiveFromISR(timerSemaphore, &xHigherPriorityTaskWoken);
     }
 
+    ucLocalTickCount++;
+
     // Request a context switch if required
     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-
-//	UART_SendString(str4);
-	UART_SendString(tick_to_ascii(xTimeNow));
-
-	// We delete timer, to create it again with new configuration timeout period
-	xTimerDelete(xAutoReloadTimer, 1);
 
 }
 
@@ -91,36 +91,17 @@ void prvAutoReloadTimerCallback(TimerHandle_t xTimer)
 // ISR from External Hardware Interrupt
 void FTM_INPUT_CAPTURE_HANDLER(void)
 {
-	static TickType_t xTimeNow;
 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 	/* Clear interrupt flag.*/
 	FTM_ClearStatusFlags(BOARD_FTM_BASEADDR, FTM_CHANNEL_FLAG);
-
-	/* Obtain the current tick count. */
-	xTimeNow = xTaskGetTickCount();
-	UART_SendString(str1);
-	UART_SendString(tick_to_ascii(xTimeNow));
-
-	/* Configure pin from PortC to toogle and debugging */
-    CLOCK_EnableClock(kCLOCK_PortC);
-	/* Configure PORTC1 as GPIO as output and Alt. 1 */
-	PORTC->PCR[1] |= (kPORT_MuxAsGpio << 8) | (kPORT_FastSlewRate << 2);
-	GPIOC->PDOR |= ~(1 << 1); /* Assign a safe value (0) in output before configuring as output */
-	GPIOC->PDDR |= (1 << 1); /* Place a 1 on bit 1 to behave as output */
 
     // Start the software timer from ISR (use xTimerStartFromISR)
     if (xTimerStartFromISR(xAutoReloadTimer, &xHigherPriorityTaskWoken) != pdPASS) {
         // Handle error if timer start fails
     }
 
-    // Release the semaphore to notify a task
-//    xSemaphoreGiveFromISR(sharedSemaphore, &xHigherPriorityTaskWoken);
+    DisableIRQ(FTM_INTERRUPT_NUMBER);
 
-
-	DisableIRQ(FTM_INTERRUPT_NUMBER);
-
-    // Request a context switch if required
-//    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 
 }
 
@@ -132,13 +113,14 @@ void uartTask(void *pvParameters)
         // Wait for the semaphore to be available
         if (xSemaphoreTake(sharedSemaphore, portMAX_DELAY) == pdTRUE)
         {
-
+        	/* Re-configure timer with the time bit to do the samples each timeout*/
         	xAutoReloadTimer = xTimerCreate("Auto-Reload_Timer",
         									mainAUTO_RELOAD_TIMER_PERIOD,
         									pdTRUE,
         									(void *)0,
         									prvAutoReloadTimerCallback);
-        	xTimerStart(xAutoReloadTimer, 1);
+        	/* Start the timer once it is aligned to the bit rate from UART*/
+        	xTimerStart(xAutoReloadTimer, NO_TICKS_TO_WAIT);
 
         }
 
@@ -149,31 +131,41 @@ void bitBangingTask(void * pvParameters)
 {
 	while(1)
 	{
-        if(xSemaphoreTake(timerSemaphore, portMAX_DELAY) == pdTRUE)
+        if(xSemaphoreTake(timerSemaphore, mainAUTO_RELOAD_TIMER_PERIOD) == pdTRUE)
         {
-        	//	Estamos en la lectura del byte
-			if (bit_count  > 0 && bit_count <= 9)
+        	// We read the bit from the GPIO
+        	pin_value_read = GPIO_PinRead(GPIOD, VIRTUAL_UART0_PIN);
+
+        	/* If it is the first bit to be read bit_count is 0*/
+			if (0 <= bit_count && 8 > bit_count)
 			{
-				 // recorremos a la izquierda para agregar el proximo bit
-				 current_byte <<= 1;
-				 // agregamos el bit
-				 current_byte |= read_bit;
+				 // Bit is shift the bit_count number to make sure current_byte is being armed*/
+				 current_byte |= (pin_value_read << bit_count);
+				 // Increase the bit_count
+				 bit_count++;
 			}
-			// START bit
-			else if (bit_count == 0 && read_bit == 0)
+			// STOP bit has to be a 1, so we check it to be sure
+			else if (8 == bit_count && 1 == pin_value_read)
 			{
-				bit_count += 1;
-			}
-			// STOP bit, idealmente checar si el bit leido es 1
-			else if (bit_count == 9 && read_bit == 1)
-			{
+				// bit_count is restarted
 				bit_count = 0;
+				// xAutoReloadTimer is stopped to avoid giving the semaphore after current_byte is completed received
+				xTimerStop(xAutoReloadTimer,NO_TICKS_TO_WAIT);
+				// xAutoReloadTimer is deleted as it is not needed anymore until the next Start bit
+				xTimerDelete(xAutoReloadTimer, NO_TICKS_TO_WAIT);
+				// Enable FTM input capture interrupt again to wait for the next UART frame
+				EnableIRQ(FTM_INTERRUPT_NUMBER);
+				// Restart the timerSempahore to avoid entering this section of code until next UART frame
+//				xSemaphoreTake(timerSemaphore, 0);
 			}
 			else
 			{
 
 			}
+
         }
+
+
 	}
 }
 
@@ -184,15 +176,16 @@ int main(void)
 	UART_Initialization();
 	Queue_Init(myQueue);
 
+	/**** Configure pin from PortC to toogle and debugging *****/
+    CLOCK_EnableClock(kCLOCK_PortC);
+	/* Configure PORTC1 as GPIO as output and Alt. 1 */
+	PORTC->PCR[1] |= (kPORT_MuxAsGpio << 8) | (kPORT_FastSlewRate << 2);
+	GPIOC->PDOR |= ~(1 << 1); /* Assign a safe value (0) in output before configuring as output */
+	GPIOC->PDDR |= (1 << 1); /* Place a 1 on bit 1 to behave as output */
+
 	UART_SendString(startString);
     // Initialize the hardware and other peripherals
 	FTM_Initialization();
-	// Create a software timer with a 2-second period, using pdFALSE for one-shot timer
-//    xOneShotTimer = xTimerCreate("One-Shot_Timer",
-//    							 mainONE_SHOT_TIMER_PERIOD,
-//								 pdFALSE,
-//								 NULL,
-//								 prvOneShotTimerCallback);
 
 	// Create and start a new timer
 	xAutoReloadTimer = xTimerCreate("Auto-Reload_Timer",
@@ -213,6 +206,7 @@ int main(void)
 	NVIC_enable_interrupt_and_priority(FTM3_IRQ, PRIORITY_2);
 	// Create data processing task
 	xTaskCreate(uartTask, "UartTask", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1, NULL);
+	xTaskCreate(bitBangingTask, "BitBangingTask", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 2, NULL);
 
 
 	// Start the FreeRTOS scheduler
