@@ -16,7 +16,23 @@
 /*******************************************************************************
  * Definitions
  ******************************************************************************/
-#define BOARD_FTM_BASEADDR FTM3
+#define BOARD_FTM_BASEADDR 			FTM3
+
+/* The Flextimer instance/channel used for board generation of PWM channels */
+#define BOARD_FTM_BASEADDR_FOR_PWM	FTM0
+#define BOARD_FIRST_FTM_CHANNEL  4U
+#define BOARD_SECOND_FTM_CHANNEL 6U
+#define BOARD_THIRD_FTM_CHANNEL  1U
+#define BOARD_FOURTH_FTM_CHANNEL 3U
+
+/* Get source clock for FTM driver */
+#define FTM_SOURCE_CLOCK CLOCK_GetFreq(kCLOCK_BusClk)
+#ifndef FTM_PWM_ON_LEVEL
+#define FTM_PWM_ON_LEVEL kFTM_HighTrue
+#endif
+#ifndef DEMO_PWM_FREQUENCY
+#define DEMO_PWM_FREQUENCY (24000U)
+#endif
 
 /* FTM channel used for input capture */
 #define BOARD_FTM_INPUT_CAPTURE_CHANNEL kFTM_Chnl_1
@@ -30,6 +46,6 @@
 #define FTM_CHANNEL_FLAG             kFTM_Chnl1Flag
 
 void FTM_Initialization(void);
-uint32_t FTM_Capture(void);
+//uint32_t FTM_Capture(void);
 
 #endif /* FTM_H_ */

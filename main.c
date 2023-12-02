@@ -47,9 +47,12 @@ TimerHandle_t xOneShotTimer;
 TimerHandle_t xAutoReloadTimer;
 
 // Variable to take the bits received from UART
-uint16_t bit_count = 0;
-uint16_t current_byte = 0;
-uint16_t pin_value_read;
+uint8_t bit_count = 0;
+uint8_t current_byte = 0;
+uint8_t pin_value_read;
+
+// Variable to save the received Duty Cycle from UART
+uint8_t updatedDutycycle;
 
 uint8_t * str1 = {"Input Capture Current Tick: \r\n"};
 uint8_t * str2 = {"Auto-Reload Timer Executing\r\n"};
@@ -105,6 +108,23 @@ void FTM_INPUT_CAPTURE_HANDLER(void)
 
 }
 
+uint8_t hexByteToDecimal(uint8_t hexByte)
+{
+	static uint8_t decimalValue;
+
+	// Convert hexadecimal digit to decimal
+	if (hexByte >= '0' && hexByte <= '9') {
+		decimalValue = hexByte - '0';
+	} else if (hexByte >= 'A' && hexByte <= 'F') {
+		decimalValue = hexByte - 'A' + 10;
+	} else {
+		decimalValue = hexByte - 'a' + 10;
+	}
+
+
+	return decimalValue;
+}
+
 // Task that processes timer creation for second time with the time bit, after this was deleted
 void uartTask(void *pvParameters)
 {
@@ -149,10 +169,19 @@ void bitBangingTask(void * pvParameters)
 			{
 				// bit_count is restarted
 				bit_count = 0;
+				updatedDutycycle = hexByteToDecimal(current_byte);
+				// Send the current byte received to the PWM output
+				FTM_UpdatePwmDutycycle(BOARD_FTM_BASEADDR_FOR_PWM, (ftm_chnl_t)BOARD_FIRST_FTM_CHANNEL, kFTM_EdgeAlignedPwm, updatedDutycycle);
+				FTM_StartTimer(BOARD_FTM_BASEADDR_FOR_PWM, kFTM_SystemClock);
+
+			    /* Software trigger to update registers */
+//			    FTM_SetSoftwareTrigger(BOARD_FTM_BASEADDR_FOR_PWM, true);
+
 				// xAutoReloadTimer is stopped to avoid giving the semaphore after current_byte is completed received
 				xTimerStop(xAutoReloadTimer,NO_TICKS_TO_WAIT);
 				// xAutoReloadTimer is deleted as it is not needed anymore until the next Start bit
 				xTimerDelete(xAutoReloadTimer, NO_TICKS_TO_WAIT);
+
 				// Enable FTM input capture interrupt again to wait for the next UART frame
 				EnableIRQ(FTM_INTERRUPT_NUMBER);
 				// Restart the timerSempahore to avoid entering this section of code until next UART frame
