@@ -41,6 +41,7 @@ QueueHandle_t dataQueue;
 // Semaphore to protect shared resources
 SemaphoreHandle_t sharedSemaphore;
 SemaphoreHandle_t timerSemaphore;
+SemaphoreHandle_t xMutex;
 
 // Software timer handle
 TimerHandle_t xOneShotTimer;
@@ -77,11 +78,19 @@ void prvAutoReloadTimerCallback(TimerHandle_t xTimer)
     	// Release the semaphore to notify a task that half of bit time has passed
     	xSemaphoreGiveFromISR(sharedSemaphore, &xHigherPriorityTaskWoken);
     }
-    else
+    else if(9 >= ucLocalTickCount)
     {
     	// Release the semaphore of timer to notify bitBangingTask that needs to capture bit
     	xSemaphoreGiveFromISR(timerSemaphore, &xHigherPriorityTaskWoken);
     }
+    else
+    {
+		// xAutoReloadTimer is deleted as it is not needed anymore until the next Start bit
+		xTimerDelete(xAutoReloadTimer, NO_TICKS_TO_WAIT);
+    	// Release the semaphore of timer to notify pwmTask that needs to start PWM signal
+//		xSemaphoreGiveFromISR(pwmSemaphore, &xHigherPriorityTaskWoken);
+    }
+
 
     ucLocalTickCount++;
 
@@ -108,23 +117,6 @@ void FTM_INPUT_CAPTURE_HANDLER(void)
 
 }
 
-uint8_t hexByteToDecimal(uint8_t hexByte)
-{
-	static uint8_t decimalValue;
-
-	// Convert hexadecimal digit to decimal
-	if (hexByte >= '0' && hexByte <= '9') {
-		decimalValue = hexByte - '0';
-	} else if (hexByte >= 'A' && hexByte <= 'F') {
-		decimalValue = hexByte - 'A' + 10;
-	} else {
-		decimalValue = hexByte - 'a' + 10;
-	}
-
-
-	return decimalValue;
-}
-
 // Task that processes timer creation for second time with the time bit, after this was deleted
 void uartTask(void *pvParameters)
 {
@@ -144,6 +136,15 @@ void uartTask(void *pvParameters)
 
         }
 
+	}
+}
+
+void pwmTask(void * pvParameters)
+{
+	while(1)
+	{
+		/* Software trigger to update registers */
+		FTM_SetSoftwareTrigger(BOARD_FTM_BASEADDR_FOR_PWM, true);
 	}
 }
 
@@ -168,24 +169,20 @@ void bitBangingTask(void * pvParameters)
 			else if (8 == bit_count && 1 == pin_value_read)
 			{
 				// bit_count is restarted
-				bit_count = 0;
-				updatedDutycycle = hexByteToDecimal(current_byte);
-				// Send the current byte received to the PWM output
-				FTM_UpdatePwmDutycycle(BOARD_FTM_BASEADDR_FOR_PWM, (ftm_chnl_t)BOARD_FIRST_FTM_CHANNEL, kFTM_EdgeAlignedPwm, updatedDutycycle);
+				bit_count++;
+				updatedDutycycle = current_byte;
+
 				FTM_StartTimer(BOARD_FTM_BASEADDR_FOR_PWM, kFTM_SystemClock);
 
-			    /* Software trigger to update registers */
-//			    FTM_SetSoftwareTrigger(BOARD_FTM_BASEADDR_FOR_PWM, true);
+				// Send the current byte received to the PWM output
+				FTM_UpdatePwmDutycycle(BOARD_FTM_BASEADDR_FOR_PWM, (ftm_chnl_t)BOARD_FIRST_FTM_CHANNEL, kFTM_EdgeAlignedPwm, updatedDutycycle);
 
-				// xAutoReloadTimer is stopped to avoid giving the semaphore after current_byte is completed received
-				xTimerStop(xAutoReloadTimer,NO_TICKS_TO_WAIT);
-				// xAutoReloadTimer is deleted as it is not needed anymore until the next Start bit
-				xTimerDelete(xAutoReloadTimer, NO_TICKS_TO_WAIT);
+//				xSemaphoreGive(xMutex);
+				xTaskCreate(pwmTask, "PwmTask", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 2, NULL);
 
 				// Enable FTM input capture interrupt again to wait for the next UART frame
 				EnableIRQ(FTM_INTERRUPT_NUMBER);
-				// Restart the timerSempahore to avoid entering this section of code until next UART frame
-//				xSemaphoreTake(timerSemaphore, 0);
+
 			}
 			else
 			{
@@ -193,10 +190,14 @@ void bitBangingTask(void * pvParameters)
 			}
 
         }
+        else
+        {
 
+        }
 
 	}
 }
+
 
 int main(void)
 {
@@ -229,6 +230,9 @@ int main(void)
     // Create a semaphore for synchronization of input capture and one-shot timer
     sharedSemaphore = xSemaphoreCreateBinary();
     timerSemaphore = xSemaphoreCreateBinary();
+    xMutex = xSemaphoreCreateMutex(); // This mutex semaphore is going to help bitBangingTask and pwmTask to interact
+
+
 
 	// Configure and enable the external interrupt
 	// For example, configure GPIO interrupt, NVIC settings, etc.
