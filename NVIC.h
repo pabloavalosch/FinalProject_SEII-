@@ -9,7 +9,7 @@
 #define NVIC_H_
 
 #include <stdint.h>
-#include "MK66F18.h"
+#include "MK64F12.h"
 
 #define NVIC_global_enable_interrupts __enable_irq()
 #define NVIC_disable_interrupts __disable_irq()

@@ -110,8 +110,7 @@ void uartTransmissionTask(void *pvParameters)
 					// Restart the bit_count to be ready for next frame to be sent
 					bit_count = 0;
 					lastWakeTime = 0;
-					// Suspend this task to be waiting for the next start bit that wanted to be sent
-	//				xTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(2000));
+					// Suspend tasks to be waiting for the next start bit that wanted to be sent
 					vTaskSuspendAll();
 					// Update transmitValue to send another bit frame
 				    // Generate a random value between 0 and 100 (inclusive)
