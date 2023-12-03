@@ -26,7 +26,7 @@
 /* TODO: insert other definitions and declarations here. */
 
 // Define the virtual UART pin
-#define UART_TX_PIN  4U
+#define UART_TX_PIN  2U
 
 // Define the Ticks that Auto-Reload Timer is going to count for timeout
 #define mainAUTO_RELOAD_TIMER_PERIOD				( (TickType_t) 100 ) // Ticks (as tick rate is 30000 ticks in 1 second, and I want 0.003175 sec.
