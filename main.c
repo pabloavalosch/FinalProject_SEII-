@@ -22,15 +22,21 @@
 #include "Strings.h"
 #include "FTM.h"
 #include "NVIC.h"
+#include "PWM.h"
 
 //#define mainONE_SHOT_TIMER_PERIOD		( pdMS_TO_TICKS( 51.82 / 1000 ) )
 //#define mainAUTO_RELOAD_TIMER_PERIOD	( pdMS_TO_TICKS( 103.64 / 1000 ) )
 
 //#define mainONE_SHOT_TIMER_PERIOD					( (TickType_t) 144 )
-#define mainAUTO_RELOAD_TIMER_PERIOD				( (TickType_t) 98 ) // Ticks (as tick rate is 30000 ticks in 1 second, and I want 0.003175 sec.
+#define TICK_RATE_US								( 33.33333333333333 )
+#define mainAUTO_RELOAD_TIMER_PERIOD				( (TickType_t) 97 ) // Ticks (as tick rate is 30000 ticks in 1 second, and I want 0.003175 sec.
 #define mainAUTO_RELOAD_TIMER_PERIOD_FOR_START_BIT	( (TickType_t) 48 ) // Ticks (as tick rate is 30000 ticks in 1 second, and I want 0.0015875 sec.
 #define NO_TICKS_TO_WAIT							(0U)
+#define MAX_DUTYCYCLE								(100U)
+#define PWM_OUTPUT_PERIOD_TICKS					 	( PWM_OUTPUT_PERIOD_US / TICK_RATE_US )
+
 #define VIRTUAL_UART0_PIN							(1U)
+
 //#define VIRTUAL_UART1_PIN							(1U)
 //#define VIRTUAL_UART2_PIN							(1U)
 //#define VIRTUAL_UART3_PIN							(1U)
@@ -52,8 +58,21 @@ uint8_t bit_count = 0;
 uint8_t current_byte = 0;
 uint8_t pin_value_read;
 
-// Variable to save the received Duty Cycle from UART
-uint8_t updatedDutycycle;
+enum{
+	UART_1,
+	UART_2,
+	UART_3,
+	UART_4
+};
+
+// Define a structure to hold PWM data and its identifier
+typedef struct {
+    uint8_t updatedDutycycle[4]; // Array to save the received Duty Cycle from different UARTs
+    uint8_t uart_num;  // Identifier for the PWM output
+    uint8_t onTimeinTicks[4];
+} PwmData_t;
+
+PwmData_t g_uartRxPwmData;
 
 uint8_t * str1 = {"Input Capture Current Tick: \r\n"};
 uint8_t * str2 = {"Auto-Reload Timer Executing\r\n"};
@@ -87,8 +106,6 @@ void prvAutoReloadTimerCallback(TimerHandle_t xTimer)
     {
 		// xAutoReloadTimer is deleted as it is not needed anymore until the next Start bit
 		xTimerDelete(xAutoReloadTimer, NO_TICKS_TO_WAIT);
-    	// Release the semaphore of timer to notify pwmTask that needs to start PWM signal
-//		xSemaphoreGiveFromISR(pwmSemaphore, &xHigherPriorityTaskWoken);
     }
 
 
@@ -139,17 +156,80 @@ void uartTask(void *pvParameters)
 	}
 }
 
-void pwmTask(void * pvParameters)
+void showPwmSignalTask(void *pvParameters)
 {
+	TickType_t xLastExecutionTime;
+
+	/* Initialize the variable used by the call to vTaskDelayUntil(). */
+	xLastExecutionTime = xTaskGetTickCount();
+
 	while(1)
 	{
-		/* Software trigger to update registers */
-		FTM_SetSoftwareTrigger(BOARD_FTM_BASEADDR_FOR_PWM, true);
+		/* Check if is different to 0, because if dutyCycle is 0, only low state has to be activated. */
+		if(0 != g_uartRxPwmData.updatedDutycycle[UART_1])
+		{
+			// Write a 1 to pin to generate PWM signal
+			GPIO_PinWrite(GPIOB, PWM0_PIN, 1U);
+			/* This is a periodic task. Block until it is time to run again. The task
+			will execute after onTime has passed. */
+			vTaskDelayUntil( &xLastExecutionTime, g_uartRxPwmData.onTimeinTicks[UART_1] );
+		}
+
+		/* Check if is different to 100, because if dutyCycle is 100, only high state has to be activated. */
+		if(100 != g_uartRxPwmData.updatedDutycycle[UART_1])
+		{
+			// Write a 0 to pin for offTime
+			GPIO_PinWrite(GPIOB, PWM0_PIN, 0U);
+			// Wait for the rest of the period the offTime
+			vTaskDelayUntil( &xLastExecutionTime, (PWM_OUTPUT_PERIOD_TICKS - g_uartRxPwmData.onTimeinTicks[UART_1]) );
+		}
+	}
+}
+
+void pwmTask(void * pvParameters)
+{
+	// pvParameters is the dataQueue
+	QueueHandle_t pwmLocalDataQueue = (QueueHandle_t)pvParameters;
+	PwmData_t uartRxLocalPwmData;
+
+	while(1)
+	{
+		// Wait for data in the queue
+		if (xQueueReceive(pwmLocalDataQueue, &uartRxLocalPwmData, portMAX_DELAY))
+		{
+			// Generate PWM signal based on pwmData.pwmValue
+			//
+
+			// Identify the PWM output using pwmData.pwmId
+			// ...
+
+			switch(uartRxLocalPwmData.uart_num)
+			{
+				case UART_1:
+					// Wait for the on-time based on the duty cycle
+					g_uartRxPwmData.updatedDutycycle[UART_1] = uartRxLocalPwmData.updatedDutycycle[UART_1];
+					g_uartRxPwmData.onTimeinTicks[UART_1] = ( (uartRxLocalPwmData.updatedDutycycle[UART_1] * PWM_OUTPUT_PERIOD_US) / MAX_DUTYCYCLE ) / TICK_RATE_US;
+//					g_uartRxPwmData.offTimeinTicks[UART_1] = ( ( (100 - uartRxLocalPwmData.updatedDutycycle[UART_1]) * PWM_OUTPUT_PERIOD_US) / MAX_DUTYCYCLE ) / TICK_RATE_US;
+					// Create task that will be handling the PWM output with the updatedDutycycle received
+					xTaskCreate(showPwmSignalTask, "ShowPwmSignalTask", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1, NULL);
+					break;
+				case UART_2:
+					break;
+				case UART_3:
+					break;
+				case UART_4:
+					break;
+			}
+		}
+
+
 	}
 }
 
 void bitBangingTask(void * pvParameters)
 {
+	 // Create an instance of the structure and initialize its members
+	PwmData_t *pwmLocalDataStruct = (PwmData_t *)pvPortMalloc(sizeof(pwmLocalDataStruct));
 	while(1)
 	{
         if(xSemaphoreTake(timerSemaphore, mainAUTO_RELOAD_TIMER_PERIOD) == pdTRUE)
@@ -168,17 +248,17 @@ void bitBangingTask(void * pvParameters)
 			// STOP bit has to be a 1, so we check it to be sure
 			else if (8 == bit_count && 1 == pin_value_read)
 			{
-				// bit_count is restarted
+				// bit_count++ to avoid entering to these conditions again
 				bit_count++;
-				updatedDutycycle = current_byte;
 
-				FTM_StartTimer(BOARD_FTM_BASEADDR_FOR_PWM, kFTM_SystemClock);
+				g_uartRxPwmData.updatedDutycycle[UART_1] = current_byte;
+				g_uartRxPwmData.uart_num = UART_1;
 
-				// Send the current byte received to the PWM output
-				FTM_UpdatePwmDutycycle(BOARD_FTM_BASEADDR_FOR_PWM, (ftm_chnl_t)BOARD_FIRST_FTM_CHANNEL, kFTM_EdgeAlignedPwm, updatedDutycycle);
+				// Send the updatedDutycycle to a queue
+				xQueueSend(dataQueue, &g_uartRxPwmData, portMAX_DELAY);
 
-//				xSemaphoreGive(xMutex);
-				xTaskCreate(pwmTask, "PwmTask", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 2, NULL);
+				// Create task that will be handling the PWM output with the updatedDutycycle received
+				xTaskCreate(pwmTask, "PwmTask", configMINIMAL_STACK_SIZE, dataQueue, tskIDLE_PRIORITY + 2, NULL);
 
 				// Enable FTM input capture interrupt again to wait for the next UART frame
 				EnableIRQ(FTM_INTERRUPT_NUMBER);
@@ -216,6 +296,7 @@ int main(void)
 	UART_SendString(startString);
     // Initialize the hardware and other peripherals
 	FTM_Initialization();
+	PWM_PinInitialization();
 
 	// Create and start a new timer
 	xAutoReloadTimer = xTimerCreate("Auto-Reload_Timer",
@@ -225,7 +306,7 @@ int main(void)
 									prvAutoReloadTimerCallback);
 
     // Create a queue to hold data
-    dataQueue = xQueueCreate(10, sizeof(int)); // Queue can hold up to 10 integers
+    dataQueue = xQueueCreate(4, sizeof(PwmData_t)); // Queue is going to hold up 4 structures corresponding to each PWM
 
     // Create a semaphore for synchronization of input capture and one-shot timer
     sharedSemaphore = xSemaphoreCreateBinary();
