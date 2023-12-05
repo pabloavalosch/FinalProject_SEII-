@@ -35,7 +35,10 @@
 #endif
 
 /* FTM channel used for input capture */
-#define BOARD_FTM_INPUT_CAPTURE_CHANNEL kFTM_Chnl_1
+#define BOARD_FTM_INPUT_CAPTURE_CHANNEL 	kFTM_Chnl_1
+#define BOARD_FTM_INPUT_CAPTURE_CHANNEL2 	kFTM_Chnl_2
+#define BOARD_FTM_INPUT_CAPTURE_CHANNEL3 	kFTM_Chnl_3
+#define BOARD_FTM_INPUT_CAPTURE_CHANNEL4 	kFTM_Chnl_4
 
 /* Interrupt number and interrupt handler for the FTM base address used */
 #define FTM_INTERRUPT_NUMBER      FTM3_IRQn
@@ -44,6 +47,15 @@
 /* Interrupt to enable and flag to read */
 #define FTM_CHANNEL_INTERRUPT_ENABLE kFTM_Chnl1InterruptEnable
 #define FTM_CHANNEL_FLAG             kFTM_Chnl1Flag
+/* Interrupt to enable and flag to read */
+#define FTM_CHANNEL_INTERRUPT_ENABLE2 kFTM_Chnl2InterruptEnable
+#define FTM_CHANNEL_FLAG2             kFTM_Chnl2Flag
+/* Interrupt to enable and flag to read */
+#define FTM_CHANNEL_INTERRUPT_ENABLE3 kFTM_Chnl3InterruptEnable
+#define FTM_CHANNEL_FLAG3             kFTM_Chnl3Flag
+/* Interrupt to enable and flag to read */
+#define FTM_CHANNEL_INTERRUPT_ENABLE4 kFTM_Chnl4InterruptEnable
+#define FTM_CHANNEL_FLAG4             kFTM_Chnl4Flag
 
 void FTM_Initialization(void);
 //uint32_t FTM_Capture(void);

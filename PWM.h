@@ -21,6 +21,13 @@
 #define PWM2_PIN									(6U) // PWM2 pin is with duty cycle received from VIRTUAL UART2
 #define PWM3_PIN									(7U) // PWM3 pin is with duty cycle received from VIRTUAL UART3
 
+// Define a structure to hold PWM data and its identifier
+typedef struct {
+    uint8_t updatedDutycycle[4]; // Array to save the received Duty Cycle from different UARTs
+    uint8_t uart_num;  // Identifier for the PWM output
+    uint8_t onTimeinTicks[4];
+} PwmData_t;
+
 void PWM_PinInitialization(void);
 
 #endif /* PWM_H_ */

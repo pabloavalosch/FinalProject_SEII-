@@ -24,10 +24,6 @@
 #include "NVIC.h"
 #include "PWM.h"
 
-//#define mainONE_SHOT_TIMER_PERIOD		( pdMS_TO_TICKS( 51.82 / 1000 ) )
-//#define mainAUTO_RELOAD_TIMER_PERIOD	( pdMS_TO_TICKS( 103.64 / 1000 ) )
-
-//#define mainONE_SHOT_TIMER_PERIOD					( (TickType_t) 144 )
 #define TICK_RATE_US								( 33.33333333333333 )
 #define mainAUTO_RELOAD_TIMER_PERIOD				( (TickType_t) 97 ) // Ticks (as tick rate is 30000 ticks in 1 second, and I want 0.003175 sec.
 #define mainAUTO_RELOAD_TIMER_PERIOD_FOR_START_BIT	( (TickType_t) 48 ) // Ticks (as tick rate is 30000 ticks in 1 second, and I want 0.0015875 sec.
@@ -36,10 +32,9 @@
 #define PWM_OUTPUT_PERIOD_TICKS					 	( PWM_OUTPUT_PERIOD_US / TICK_RATE_US )
 
 #define VIRTUAL_UART0_PIN							(1U)
-
-//#define VIRTUAL_UART1_PIN							(1U)
-//#define VIRTUAL_UART2_PIN							(1U)
-//#define VIRTUAL_UART3_PIN							(1U)
+//#define VIRTUAL_UART1_PIN							(7U)
+//#define VIRTUAL_UART2_PIN							(8U)
+//#define VIRTUAL_UART3_PIN							(9U)
 
 // Queue to hold random numbers
 QueueHandle_t dataQueue;
@@ -47,7 +42,6 @@ QueueHandle_t dataQueue;
 // Semaphore to protect shared resources
 SemaphoreHandle_t sharedSemaphore;
 SemaphoreHandle_t timerSemaphore;
-SemaphoreHandle_t xMutex;
 
 // Software timer handle
 TimerHandle_t xOneShotTimer;
@@ -58,26 +52,7 @@ uint8_t bit_count = 0;
 uint8_t current_byte = 0;
 uint8_t pin_value_read;
 
-enum{
-	UART_1,
-	UART_2,
-	UART_3,
-	UART_4
-};
-
-// Define a structure to hold PWM data and its identifier
-typedef struct {
-    uint8_t updatedDutycycle[4]; // Array to save the received Duty Cycle from different UARTs
-    uint8_t uart_num;  // Identifier for the PWM output
-    uint8_t onTimeinTicks[4];
-} PwmData_t;
-
 PwmData_t g_uartRxPwmData;
-
-uint8_t * str1 = {"Input Capture Current Tick: \r\n"};
-uint8_t * str2 = {"Auto-Reload Timer Executing\r\n"};
-uint8_t * str3 = {"One-Shot Timer Executed, about to start a new timer\r\n"};
-uint8_t * str4 = {"bitReceived \r\n"};
 
 // Timer callback function
 
@@ -86,9 +61,8 @@ void prvAutoReloadTimerCallback(TimerHandle_t xTimer)
 	static uint8_t ucLocalTickCount = 0;
 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-	/* Do the toogle of pin to know when this callback is entering (just for debugging) */
-	GPIOC->PTOR |= (1 << 1); /* Place a 1 on bit 1 to toggle that GPIO bit */
-
+//	/* Do the toogle of pin to know when this callback is entering (just for debugging) */
+//	GPIOC->PTOR |= (1 << 1); /* Place a 1 on bit 1 to toggle that GPIO bit */
 
     if(!ucLocalTickCount)
     {
@@ -134,7 +108,7 @@ void FTM_INPUT_CAPTURE_HANDLER(void)
 
 }
 
-// Task that processes timer creation for second time with the time bit, after this was deleted
+// Task that processes timer creation for the time bit, after this one was deleted
 void uartTask(void *pvParameters)
 {
     while (1)
@@ -197,11 +171,8 @@ void pwmTask(void * pvParameters)
 		// Wait for data in the queue
 		if (xQueueReceive(pwmLocalDataQueue, &uartRxLocalPwmData, portMAX_DELAY))
 		{
-			// Generate PWM signal based on pwmData.pwmValue
-			//
-
-			// Identify the PWM output using pwmData.pwmId
-			// ...
+			// Generate PWM signal based on PwmData structure updatedDutycycle and
+			// Identify the PWM output using the uart_num from the same structure
 
 			switch(uartRxLocalPwmData.uart_num)
 			{
@@ -209,15 +180,26 @@ void pwmTask(void * pvParameters)
 					// Wait for the on-time based on the duty cycle
 					g_uartRxPwmData.updatedDutycycle[UART_1] = uartRxLocalPwmData.updatedDutycycle[UART_1];
 					g_uartRxPwmData.onTimeinTicks[UART_1] = ( (uartRxLocalPwmData.updatedDutycycle[UART_1] * PWM_OUTPUT_PERIOD_US) / MAX_DUTYCYCLE ) / TICK_RATE_US;
-//					g_uartRxPwmData.offTimeinTicks[UART_1] = ( ( (100 - uartRxLocalPwmData.updatedDutycycle[UART_1]) * PWM_OUTPUT_PERIOD_US) / MAX_DUTYCYCLE ) / TICK_RATE_US;
 					// Create task that will be handling the PWM output with the updatedDutycycle received
 					xTaskCreate(showPwmSignalTask, "ShowPwmSignalTask", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1, NULL);
 					break;
 				case UART_2:
+//					g_uartRxPwmData.updatedDutycycle[UART_2] = uartRxLocalPwmData.updatedDutycycle[UART_2];
+//					g_uartRxPwmData.onTimeinTicks[UART_2] = ( (uartRxLocalPwmData.updatedDutycycle[UART_2] * PWM_OUTPUT_PERIOD_US) / MAX_DUTYCYCLE ) / TICK_RATE_US;
+//					// Create task that will be handling the PWM output with the updatedDutycycle received
+//					xTaskCreate(showPwmSignalTask, "ShowPwmSignalTask", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1, NULL);
 					break;
 				case UART_3:
+//					g_uartRxPwmData.updatedDutycycle[UART_3] = uartRxLocalPwmData.updatedDutycycle[UART_3];
+//					g_uartRxPwmData.onTimeinTicks[UART_3] = ( (uartRxLocalPwmData.updatedDutycycle[UART_3] * PWM_OUTPUT_PERIOD_US) / MAX_DUTYCYCLE ) / TICK_RATE_US;
+//					// Create task that will be handling the PWM output with the updatedDutycycle received
+//					xTaskCreate(showPwmSignalTask, "ShowPwmSignalTask", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1, NULL);
 					break;
 				case UART_4:
+//					g_uartRxPwmData.updatedDutycycle[UART_4] = uartRxLocalPwmData.updatedDutycycle[UART_4];
+//					g_uartRxPwmData.onTimeinTicks[UART_4] = ( (uartRxLocalPwmData.updatedDutycycle[UART_4] * PWM_OUTPUT_PERIOD_US) / MAX_DUTYCYCLE ) / TICK_RATE_US;
+//					// Create task that will be handling the PWM output with the updatedDutycycle received
+//					xTaskCreate(showPwmSignalTask, "ShowPwmSignalTask", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1, NULL);
 					break;
 			}
 		}
@@ -228,12 +210,16 @@ void pwmTask(void * pvParameters)
 
 void bitBangingTask(void * pvParameters)
 {
+	// Variable to know which input capture received from UART.
+//	uint8_t inputCaptureNum;
+
 	 // Create an instance of the structure and initialize its members
 	PwmData_t *pwmLocalDataStruct = (PwmData_t *)pvPortMalloc(sizeof(pwmLocalDataStruct));
 	while(1)
 	{
         if(xSemaphoreTake(timerSemaphore, mainAUTO_RELOAD_TIMER_PERIOD) == pdTRUE)
         {
+//        	inputCaptureNum = get_input_capture_num();
         	// We read the bit from the GPIO
         	pin_value_read = GPIO_PinRead(GPIOD, VIRTUAL_UART0_PIN);
 
@@ -286,12 +272,12 @@ int main(void)
 	UART_Initialization();
 	Queue_Init(myQueue);
 
-	/**** Configure pin from PortC to toogle and debugging *****/
-    CLOCK_EnableClock(kCLOCK_PortC);
-	/* Configure PORTC1 as GPIO as output and Alt. 1 */
-	PORTC->PCR[1] |= (kPORT_MuxAsGpio << 8) | (kPORT_FastSlewRate << 2);
-	GPIOC->PDOR |= ~(1 << 1); /* Assign a safe value (0) in output before configuring as output */
-	GPIOC->PDDR |= (1 << 1); /* Place a 1 on bit 1 to behave as output */
+//	/**** Configure pin from PortC to toogle and debugging *****/
+//    CLOCK_EnableClock(kCLOCK_PortC);
+//	/* Configure PORTC1 as GPIO as output and Alt. 1 */
+//	PORTC->PCR[1] |= (kPORT_MuxAsGpio << 8) | (kPORT_FastSlewRate << 2);
+//	GPIOC->PDOR |= ~(1 << 1); /* Assign a safe value (0) in output before configuring as output */
+//	GPIOC->PDDR |= (1 << 1); /* Place a 1 on bit 1 to behave as output */
 
 	UART_SendString(startString);
     // Initialize the hardware and other peripherals
@@ -311,8 +297,6 @@ int main(void)
     // Create a semaphore for synchronization of input capture and one-shot timer
     sharedSemaphore = xSemaphoreCreateBinary();
     timerSemaphore = xSemaphoreCreateBinary();
-    xMutex = xSemaphoreCreateMutex(); // This mutex semaphore is going to help bitBangingTask and pwmTask to interact
-
 
 
 	// Configure and enable the external interrupt
